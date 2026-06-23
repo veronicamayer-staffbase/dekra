@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<!--
+  ===========================================================================
+  Staffbase Custom Widget — "My HR & IT Tickets" / "Meine HR- & IT-Anfragen"
+  Demo build for DEKRA. Styled to sit beside the OOTB "My Absences" /
+  "My Payslips" widgets on the same homepage.
+
+  SCOPE: VIEW (own HR & IT items + status) · TRACK (open count + "needs
+  attention" highlight) · ACT (Open / Update / Respond per ticket) · CREATE
+  (inline new-request modal with mock confirmation + ServiceNow catalog links).
+
+  THEMING: inherits the instance brand via --sb-brand-color* with DEKRA-green
+  fallbacks; inherits the instance font via --sb-font-family with a system
+  fallback. No brand colour/font hardcoded where a theme variable applies.
+
+  COMPLIANCE: permission-aware (own items only — scope server-side in prod);
+  Betriebsrat-safe (no per-user view tracking/analytics); no localStorage /
+  sessionStorage (all state in memory); bilingual de/en via `locale`;
+  WCAG 2.1 AA (keyboard, contrast, focus, modal focus trap, status by
+  icon+text+aria, not colour alone).
+  ===========================================================================
+-->
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="widget-name" content="My HR & IT Tickets">
+  <meta name="widget-description" content="View, track, act on and create the employee's own HR and IT requests from ServiceNow ITSM and the HR Service Desk — styled to match the OOTB Staffbase home widgets.">
+  <meta name="widget-tags" content="HR Data, Operations, ServiceNow">
+  <title>My HR &amp; IT Tickets</title>
+  <style>
+    /* ---- Theme tokens — inherit brand, DEKRA-green fallbacks ------------- */
+    :root {
+      --brand:      var(--sb-brand-color, #007A33);        /* DEKRA green     */
+      --brand-soft: var(--sb-brand-color-light, #E3F0DA);  /* light-green     */
+      --brand-deep: #2E6B47;                               /* text on soft    */
+      --on-brand:   #ffffff;
+
+      --heading: #16271F;     /* near-black green headings */
+      --text:    #243029;     /* body */
+      --meta:    #6B6B6B;     /* muted meta (AA-safe nudge from #8A8A8A) */
+
+      --card-bg: #ffffff;
+      --panel:   #F4F5F5;     /* inner panels / value boxes */
+      --icon-chip: #EFEFEF;   /* circular row icon chip */
+      --card-shadow: 0 2px 8px rgba(0,0,0,0.06);
+
+      --attention-bg: #FDF1E0;   /* subtle warm orange — "needs attention" rows */
+
+      /* Status pills */
+      --st-new-bg: #E7EAE9;   --st-new-fg: #46504B;
+      --st-prog-bg: #E6EEF5;  --st-prog-fg: #2D5070;
+      --st-wait-bg: #FBEBC8;  --st-wait-fg: #7A4F00;
+      --st-done-bg: var(--brand-soft); --st-done-fg: var(--brand-deep);
+
+      --prio-high: #D64545;  --prio-med: #D79A22;  --prio-low: #A6ADA9;
+
+      --r-card: 16px;  --r-panel: 12px;  --r-field: 12px;  --r-pill: 999px;
+      --overlay: rgba(22, 39, 31, .5);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --brand:      var(--sb-brand-color, #2E9E57);
+        --brand-soft: var(--sb-brand-color-light, rgba(46,158,87,.20));
+        --brand-deep: #8FD9A8;
+        --heading: #E8F0EA;  --text: #DCE3DE;  --meta: #9BA39E;
+        --card-bg: #1C231F;  --panel: #262E28;  --icon-chip: #333B35;
+        --card-shadow: none;
+        --attention-bg: #352C1A;
+        --st-new-bg: #303a34;   --st-new-fg: #cdd5cf;
+        --st-prog-bg: #233440;  --st-prog-fg: #bcd6ea;
+        --st-wait-bg: #463713;  --st-wait-fg: #f3cf86;
+        --overlay: rgba(0,0,0,.6);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: var(--sb-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
+      color: var(--text); background: transparent; line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .cw-widget {
+      max-width: 760px; margin: 0 auto; background: var(--card-bg);
+      border-radius: var(--r-card); box-shadow: var(--card-shadow);
+      padding: 24px; overflow: visible;
+    }
+
+    /* ---- Header --------------------------------------------------------- */
+    .cw-header-main {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .title-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+    .cw-title { margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--heading); letter-spacing: -0.01em; }
+    .open-badge {
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px;
+      border-radius: var(--r-pill); background: var(--brand-soft); color: var(--brand-deep);
+      font-weight: 700; font-size: 0.8rem; white-space: nowrap;
+    }
+    .open-badge .count { font-variant-numeric: tabular-nums; }
+    .new-request-btn { flex: none; }
+    .privacy-note {
+      margin: 10px 0 0; font-size: 0.78rem; color: var(--meta);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .privacy-note svg { flex: none; }
+
+    /* ---- Toolbar -------------------------------------------------------- */
+    .cw-toolbar { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .cw-segmented {
+      display: inline-flex; gap: 4px; background: var(--panel); border-radius: var(--r-pill);
+      padding: 4px; align-self: flex-start; max-width: 100%;
+    }
+    .cw-seg {
+      appearance: none; border: none; background: transparent; color: var(--meta);
+      font: inherit; font-weight: 600; font-size: 0.85rem; padding: 8px 18px;
+      border-radius: var(--r-pill); cursor: pointer; min-height: 38px;
+    }
+    .cw-seg[aria-pressed="true"] { background: var(--brand-soft); color: var(--brand-deep); }
+
+    .toolbar-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .search-wrap { position: relative; flex: 1 1 200px; min-width: 0; }
+    .search-wrap svg {
+      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+      color: var(--meta); pointer-events: none;
+    }
+    .search-input, .status-filter, .form-control {
+      width: 100%; font: inherit; background: var(--panel); color: var(--text);
+      border: 1px solid transparent; border-radius: var(--r-field); min-height: 44px;
+    }
+    .search-input { padding: 10px 14px 10px 40px; }
+    .status-filter { flex: 0 0 auto; max-width: 100%; padding: 10px 14px; }
+
+    /* ---- List ----------------------------------------------------------- */
+    .cw-list { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .ticket-card {
+      display: flex; gap: 12px; background: var(--panel); border-radius: var(--r-panel);
+      padding: 14px 16px; align-items: flex-start;
+    }
+    .ticket-card.is-action { background: var(--attention-bg); }   /* subtle orange, no border */
+    .row-icon {
+      flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--icon-chip);
+      display: flex; align-items: center; justify-content: center; color: var(--brand-deep); margin-top: 2px;
+    }
+    .ticket-main { flex: 1; min-width: 0; }
+    .action-flag {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700;
+      color: var(--st-wait-fg); background: var(--st-wait-bg); border-radius: var(--r-pill);
+      padding: 3px 9px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .03em;
+    }
+    .ticket-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ticket-num { font-size: 0.78rem; font-weight: 700; color: var(--meta); font-variant-numeric: tabular-nums; }
+    .status-chip {
+      margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.74rem; font-weight: 700; padding: 4px 10px; border-radius: var(--r-pill); white-space: nowrap;
+    }
+    .status-chip svg { flex: none; }
+    .status-new { background: var(--st-new-bg); color: var(--st-new-fg); }
+    .status-prog { background: var(--st-prog-bg); color: var(--st-prog-fg); }
+    .status-wait { background: var(--st-wait-bg); color: var(--st-wait-fg); }
+    .status-done { background: var(--st-done-bg); color: var(--st-done-fg); }
+
+    .ticket-subject { margin: 9px 0 0; font-size: 0.96rem; font-weight: 600; color: var(--heading); overflow-wrap: anywhere; }
+
+    .ticket-meta {
+      margin-top: 10px; display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap;
+      font-size: 0.78rem; color: var(--meta);
+    }
+    .category-chip {
+      display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
+      border-radius: var(--r-pill); color: var(--text); background: var(--card-bg);
+      font-weight: 600; font-size: 0.74rem;
+    }
+    .priority { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+    .prio-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .prio-HIGH .prio-dot { background: var(--prio-high); }
+    .prio-MEDIUM .prio-dot { background: var(--prio-med); }
+    .prio-LOW .prio-dot { background: var(--prio-low); }
+    .updated { margin-left: auto; }
+
+    .ticket-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* ---- Buttons -------------------------------------------------------- */
+    .cw-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      font: inherit; font-weight: 600; font-size: 0.86rem; text-decoration: none; cursor: pointer;
+      border-radius: var(--r-field); min-height: 44px; padding: 10px 18px; border: none;
+      transition: filter .12s ease, background .12s ease;
+    }
+    .cw-btn:hover { filter: brightness(0.97); }
+    .cw-btn-primary { background: var(--brand); color: var(--on-brand); }
+    .cw-btn-soft { background: var(--brand-soft); color: var(--brand-deep); }
+    .cw-btn-ghost { background: transparent; color: var(--meta); }
+    .cw-btn-ghost:hover { background: rgba(0,0,0,.04); filter: none; }
+    .cw-btn-sm { min-height: 36px; padding: 7px 13px; font-size: 0.8rem; }
+    .cw-btn-block { width: 100%; }
+    .cw-btn[disabled] { opacity: .6; cursor: default; }
+
+    /* ---- States --------------------------------------------------------- */
+    .cw-state { padding: 40px 18px; text-align: center; color: var(--meta); }
+    .cw-state svg { color: var(--meta); margin-bottom: 10px; }
+    .cw-state h3 { margin: 0 0 4px; color: var(--heading); font-size: 1rem; }
+    .cw-state p { margin: 0 auto; max-width: 40ch; font-size: 0.88rem; }
+    .cw-state .cw-btn { margin-top: 16px; }
+    .spinner {
+      width: 30px; height: 30px; border: 3px solid var(--panel); border-top-color: var(--brand);
+      border-radius: 50%; margin: 0 auto 12px; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+    .visually-hidden {
+      position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
+    a:focus-visible, button:focus-visible, input:focus-visible,
+    select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--brand); outline-offset: 2px;
+    }
+
+    /* ---- Modal ---------------------------------------------------------- */
+    .cw-modal-overlay {
+      position: fixed; inset: 0; background: var(--overlay);
+      display: flex; align-items: flex-end; justify-content: center; z-index: 1000;
+    }
+    .cw-modal-overlay[hidden] { display: none; }
+    .cw-modal {
+      background: var(--card-bg); width: 100%; max-width: 520px; max-height: 92vh;
+      border-radius: var(--r-card) var(--r-card) 0 0; display: flex; flex-direction: column;
+      overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,.25);
+    }
+    @media (min-width: 560px) {
+      .cw-modal-overlay { align-items: center; padding: 20px; }
+      .cw-modal { border-radius: var(--r-card); }
+    }
+    .cw-modal-head { display: flex; align-items: center; gap: 8px; padding: 16px 18px; }
+    .cw-modal-head h2 { margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--heading); flex: 1; }
+    .icon-btn {
+      appearance: none; border: none; background: transparent; color: var(--meta); cursor: pointer;
+      border-radius: 10px; width: 40px; height: 40px; display: inline-flex; align-items: center;
+      justify-content: center; flex: none;
+    }
+    .icon-btn:hover { background: var(--panel); }
+    .cw-modal-body { padding: 0 18px 20px; overflow-y: auto; }
+
+    .modal-sub { margin: 0 0 14px; font-size: 0.86rem; color: var(--meta); }
+    .type-group { margin-bottom: 18px; }
+    .type-group-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.84rem; color: var(--heading); }
+    .type-list { display: flex; flex-direction: column; gap: 8px; }
+    .type-card {
+      display: flex; align-items: center; gap: 12px; background: var(--panel);
+      border-radius: var(--r-panel); padding: 6px 8px 6px 6px; overflow: hidden;
+    }
+    .type-pick {
+      flex: 1; appearance: none; border: none; background: transparent; cursor: pointer;
+      text-align: left; padding: 8px 6px; font: inherit; color: var(--text);
+      display: flex; align-items: center; gap: 12px; border-radius: var(--r-panel); min-height: 52px;
+    }
+    .type-pick:hover { background: rgba(0,0,0,.03); }
+    .type-pick .row-icon { background: var(--card-bg); }
+    .type-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .type-name { font-weight: 600; font-size: 0.92rem; color: var(--heading); }
+    .type-desc { font-size: 0.78rem; color: var(--meta); }
+    .type-catalog {
+      flex: none; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+      font-size: 0.76rem; font-weight: 700; color: var(--brand-deep); text-decoration: none;
+      padding: 8px 11px; border-radius: var(--r-pill); background: var(--brand-soft);
+    }
+
+    .form-field { margin-bottom: 14px; }
+    .form-field label { display: block; font-size: 0.82rem; font-weight: 600; color: var(--heading); margin-bottom: 6px; }
+    .form-control { padding: 10px 14px; }
+    textarea.form-control { min-height: 88px; resize: vertical; }
+    .form-error { color: var(--prio-high); font-size: 0.8rem; margin: -8px 0 12px; }
+    .form-catalog-hint { font-size: 0.8rem; color: var(--meta); margin: 4px 0 16px; }
+    .form-catalog-hint a { color: var(--brand-deep); font-weight: 700; }
+
+    .success-box { text-align: center; padding: 12px 4px 4px; }
+    .success-icon {
+      width: 60px; height: 60px; border-radius: 50%; background: var(--brand-soft); color: var(--brand-deep);
+      display: flex; align-items: center; justify-content: center; margin: 0 auto 14px;
+    }
+    .success-box h3 { margin: 0 0 6px; font-size: 1.05rem; color: var(--heading); }
+    .success-box .ticket-pill {
+      display: inline-block; font-weight: 700; font-variant-numeric: tabular-nums;
+      background: var(--panel); border-radius: var(--r-pill); padding: 5px 14px; margin: 4px 0;
+    }
+    .success-box p { color: var(--meta); font-size: 0.86rem; max-width: 38ch; margin: 8px auto; }
+
+    @media (max-width: 520px) {
+      .cw-widget { padding: 20px; }
+      .new-request-btn { width: 100%; order: 3; }
+      .title-wrap { order: 1; }
+    }
+    @media (max-width: 480px) {
+      .status-chip { margin-left: 0; }
+      .updated { margin-left: 0; flex-basis: 100%; }
+      .cw-segmented { width: 100%; justify-content: space-between; }
+      .cw-seg { flex: 1; padding: 8px 8px; }
+      .status-filter { flex: 1 1 100%; }
+      .type-card { flex-wrap: wrap; }
+      .type-catalog { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <main class="cw-widget" aria-labelledby="cw-title">
+    <header>
+      <div class="cw-header-main">
+        <div class="title-wrap">
+          <h1 class="cw-title" id="cw-title" data-i18n="title">My HR &amp; IT Tickets</h1>
+          <span class="open-badge" aria-live="polite">
+            <span class="count" id="openCount">0</span>
+            <span data-i18n="openLabel">open</span>
+            <span class="visually-hidden" id="openBadgeAria"></span>
+          </span>
+        </div>
+        <button type="button" class="cw-btn cw-btn-primary new-request-btn" id="newRequestBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span data-i18n="newRequest">New request</span>
+        </button>
+      </div>
+      <p class="privacy-note">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span data-i18n="privacyNote">You only see your own requests.</span>
+      </p>
+    </header>
+
+    <div class="cw-toolbar">
+      <div class="cw-segmented" role="group" aria-label="" data-i18n-aria-label="filterBySystem" id="systemTabs">
+        <button type="button" class="cw-seg" data-system="ALL" aria-pressed="true" data-i18n="tabAll">All</button>
+        <button type="button" class="cw-seg" data-system="IT" aria-pressed="false" data-i18n="tabIT">IT</button>
+        <button type="button" class="cw-seg" data-system="HR" aria-pressed="false" data-i18n="tabHR">HR</button>
+      </div>
+      <div class="toolbar-row">
+        <div class="search-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+          <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">Search requests</label>
+          <input type="search" id="searchInput" class="search-input" placeholder="Search requests…" data-i18n-placeholder="searchPlaceholder" autocomplete="off">
+        </div>
+        <label class="visually-hidden" for="statusFilter" data-i18n="statusFilterLabel">Filter by status</label>
+        <select id="statusFilter" class="status-filter" aria-label="" data-i18n-aria-label="statusFilterLabel"></select>
+      </div>
+    </div>
+
+    <div id="region" aria-live="polite" aria-busy="true">
+      <div class="cw-state">
+        <div class="spinner" aria-hidden="true"></div>
+        <p data-i18n="loading">Loading your requests…</p>
+      </div>
+    </div>
+  </main>
+
+  <div class="cw-modal-overlay" id="modalOverlay" hidden>
+    <div class="cw-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="cw-modal-head">
+        <button type="button" class="icon-btn" id="modalBack" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          <span class="visually-hidden" id="modalBackLabel">Back</span>
+        </button>
+        <h2 id="modalTitle">New request</h2>
+        <button type="button" class="icon-btn" id="modalClose">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          <span class="visually-hidden" id="modalCloseLabel">Close</span>
+        </button>
+      </div>
+      <div class="cw-modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    /* ===================== CONFIG ===================== */
+    const locale = 'de_DE';          // ← 'en_US' to preview English
+    const SIMULATE = { loadMs: 650, error: false, empty: false };
+
+    const intlLocale = locale === 'de_DE' ? 'de-DE' : 'en-US';
+    document.documentElement.lang = locale === 'de_DE' ? 'de' : 'en';
+
+    /* ===== ▼▼▼ DATA SOURCE (swap for live feeds) ▼▼▼ =====
+       IT → ServiceNow ITSM (Table API / Staffbase ServiceNow widget feed).
+       HR → Integration-Services connector to the HR Service Desk.
+       New requests → ServiceNow ESC catalog (catalogUrl). Scope to the
+       authenticated employee server-side — only their own items.
+       ===================================================== */
+    const now = new Date();
+    const hoursAgo = h => new Date(now.getTime() - h * 3600e3).toISOString();
+    const daysAgo  = d => new Date(now.getTime() - d * 86400e3).toISOString();
+
+    const MOCK_TICKETS = [
+      { id: 1, ticketNumber: 'INC0098234', subject: 'VPN-Zugang funktioniert nicht im Homeoffice',
+        system: 'ServiceNow ITSM', category: 'ACCESS', status: 'IN_PROGRESS', priority: 'HIGH',
+        createdAt: daysAgo(2), updatedAt: hoursAgo(5), actionRequired: false,
+        url: 'https://dekra.service-now.com/now/nav/ui/classic/params/target/incident.do%3Fsysparm_query%3Dnumber%3DINC0098234' },
+      { id: 2, ticketNumber: 'INC0097812', subject: 'Zugriff auf SharePoint-Projektordner „Audit 2026“ fehlt',
+        system: 'ServiceNow ITSM', category: 'ACCESS', status: 'WAITING_ON_YOU', priority: 'MEDIUM',
+        createdAt: daysAgo(4), updatedAt: hoursAgo(28), actionRequired: true,
+        url: 'https://dekra.service-now.com/now/nav/ui/classic/params/target/incident.do%3Fsysparm_query%3Dnumber%3DINC0097812' },
+      { id: 3, ticketNumber: 'REQ0045671', subject: 'Neues Notebook für Außendienst-Inspektor anfordern',
+        system: 'ServiceNow ITSM', category: 'HARDWARE', status: 'NEW', priority: 'MEDIUM',
+        createdAt: hoursAgo(20), updatedAt: hoursAgo(20), actionRequired: false,
+        url: 'https://dekra.service-now.com/now/nav/ui/classic/params/target/sc_request.do%3Fsysparm_query%3Dnumber%3DREQ0045671' },
+      { id: 4, ticketNumber: 'INC0097655', subject: 'Defektes Headset im Prüflabor Stuttgart',
+        system: 'ServiceNow ITSM', category: 'HARDWARE', status: 'RESOLVED', priority: 'LOW',
+        createdAt: daysAgo(6), updatedAt: daysAgo(2), actionRequired: false,
+        url: 'https://dekra.service-now.com/now/nav/ui/classic/params/target/incident.do%3Fsysparm_query%3Dnumber%3DINC0097655' },
+      { id: 5, ticketNumber: 'HR0004567', subject: 'Frage zur Reisekostenabrechnung Mai',
+        system: 'HR Service Desk', category: 'PAYROLL', status: 'IN_PROGRESS', priority: 'LOW',
+        createdAt: daysAgo(3), updatedAt: daysAgo(1), actionRequired: false,
+        url: 'https://hr.dekra.com/servicedesk/cases/HR0004567' },
+      { id: 6, ticketNumber: 'HR0004601', subject: 'Antrag auf unbezahlten Sonderurlaub',
+        system: 'HR Service Desk', category: 'LEAVE', status: 'NEW', priority: 'MEDIUM',
+        createdAt: hoursAgo(30), updatedAt: hoursAgo(30), actionRequired: false,
+        url: 'https://hr.dekra.com/servicedesk/cases/HR0004601' },
+      { id: 7, ticketNumber: 'HR0004588', subject: 'Onboarding-Unterlagen für neuen Kollegen unvollständig',
+        system: 'HR Service Desk', category: 'ONBOARDING', status: 'WAITING_ON_YOU', priority: 'HIGH',
+        createdAt: daysAgo(5), updatedAt: hoursAgo(10), actionRequired: true,
+        url: 'https://hr.dekra.com/servicedesk/cases/HR0004588' },
+      { id: 8, ticketNumber: 'HR0004520', subject: 'Bescheinigung über Beschäftigungsdauer angefordert',
+        system: 'HR Service Desk', category: 'CERTIFICATE', status: 'RESOLVED', priority: 'LOW',
+        createdAt: daysAgo(9), updatedAt: daysAgo(1), actionRequired: false,
+        url: 'https://hr.dekra.com/servicedesk/cases/HR0004520' }
+    ];
+
+    const REQUEST_TYPES = {
+      IT: [
+        { key: 'it_incident', system: 'ServiceNow ITSM', numPrefix: 'INC', defaultCategory: 'OTHER',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=incident_report' },
+        { key: 'it_hardware', system: 'ServiceNow ITSM', numPrefix: 'REQ', defaultCategory: 'HARDWARE',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=hardware_request' },
+        { key: 'it_access', system: 'ServiceNow ITSM', numPrefix: 'REQ', defaultCategory: 'ACCESS',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=access_request' }
+      ],
+      HR: [
+        { key: 'hr_payroll', system: 'HR Service Desk', numPrefix: 'HR', defaultCategory: 'PAYROLL',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=payroll_query' },
+        { key: 'hr_leave', system: 'HR Service Desk', numPrefix: 'HR', defaultCategory: 'LEAVE',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=leave_absence' },
+        { key: 'hr_certificate', system: 'HR Service Desk', numPrefix: 'HR', defaultCategory: 'CERTIFICATE',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=certificate_request' },
+        { key: 'hr_contract', system: 'HR Service Desk', numPrefix: 'HR', defaultCategory: 'CONTRACT',
+          catalogUrl: 'https://dekra.service-now.com/esc?id=sc_cat_item&sys_id=contract_question' }
+      ]
+    };
+    /* ===== ▲▲▲ END DATA SOURCE ▲▲▲ ===== */
+
+    const TYPE_BY_KEY = {};
+    ['IT', 'HR'].forEach(g => REQUEST_TYPES[g].forEach(rt => { rt.group = g; TYPE_BY_KEY[rt.key] = rt; }));
+
+    /* ===================== i18n ===================== */
+    const T = {
+      de_DE: {
+        title: "Meine HR- & IT-Anfragen", privacyNote: "Sie sehen nur Ihre eigenen Anfragen.",
+        openLabel: "offen", openAria: "{n} offene Anfragen",
+        filterBySystem: "Nach System filtern", tabAll: "Alle", tabIT: "IT", tabHR: "HR",
+        searchLabel: "Anfragen durchsuchen", searchPlaceholder: "Anfragen durchsuchen…",
+        statusFilterLabel: "Nach Status filtern", statusAll: "Alle Status",
+        loading: "Anfragen werden geladen…",
+        emptyTitle: "Alles erledigt", emptyBody: "Keine offenen Anfragen — Sie haben nichts Offenes.",
+        noResultsTitle: "Keine Treffer", noResultsBody: "Keine Anfragen entsprechen Ihrer Suche oder Ihrem Filter.",
+        errorTitle: "Anfragen konnten nicht geladen werden",
+        errorBody: "Bitte versuchen Sie es erneut. Besteht das Problem weiter, wenden Sie sich an den Support.",
+        retry: "Erneut versuchen", actionRequired: "Aktion erforderlich", updated: "Aktualisiert {date}",
+        priorityAria: "Priorität: {p}", statusAria: "Status: {s}",
+        actOpen: "Öffnen", actUpdate: "Aktualisieren / kommentieren", actRespond: "Antworten",
+        ariaOpen: "Anfrage {num} öffnen (neuer Tab)",
+        ariaUpdate: "Kommentar zu Anfrage {num} hinzufügen (neuer Tab)",
+        ariaRespond: "Auf Anfrage {num} antworten (neuer Tab)",
+        newRequest: "Neue Anfrage", newRequestSub: "Wählen Sie eine Anfrageart",
+        back: "Zurück", close: "Schließen", openInServiceNow: "In ServiceNow öffnen",
+        formSubject: "Betreff", formDescription: "Beschreibung", formCategory: "Kategorie", formPriority: "Priorität",
+        formSubjectPh: "Kurze Zusammenfassung Ihres Anliegens", formDescriptionPh: "Beschreiben Sie Ihr Anliegen…",
+        submit: "Anfrage absenden", submitting: "Wird gesendet…", errSubject: "Bitte geben Sie einen Betreff ein.",
+        catalogHintPre: "Lieber direkt im System? ", catalogHintLink: "In ServiceNow ausfüllen",
+        successTitle: "Anfrage erstellt",
+        successBody: "Ihre Anfrage {num} wurde erstellt und erscheint jetzt oben in Ihrer Liste.",
+        successNote: "In einer Live-Umgebung wird die Anfrage über SSO an ServiceNow übergeben.",
+        done: "Fertig", groupITLabel: "IT-Anfragen", groupHRLabel: "HR-Anfragen",
+        status: { NEW: "Neu", IN_PROGRESS: "In Bearbeitung", WAITING_ON_YOU: "Wartet auf Sie", RESOLVED: "Gelöst" },
+        category: { ACCESS: "Zugriff", HARDWARE: "Hardware", PAYROLL: "Gehalt", LEAVE: "Urlaub",
+                    CONTRACT: "Vertrag", CERTIFICATE: "Bescheinigung", ONBOARDING: "Onboarding", OTHER: "Sonstiges" },
+        priority: { LOW: "Niedrig", MEDIUM: "Mittel", HIGH: "Hoch" },
+        requestTypes: { it_incident: "Störung melden", it_hardware: "Hardware-Anfrage", it_access: "Zugriffsanfrage",
+                        hr_payroll: "Gehaltsabrechnung", hr_leave: "Urlaub / Abwesenheit",
+                        hr_certificate: "Bescheinigung", hr_contract: "Vertragsfrage" },
+        requestTypeDesc: { it_incident: "Etwas funktioniert nicht", it_hardware: "Gerät oder Zubehör anfordern",
+                           it_access: "Zugriff auf System oder Ordner", hr_payroll: "Frage zu Gehalt oder Abrechnung",
+                           hr_leave: "Urlaub oder Abwesenheit beantragen", hr_certificate: "Bescheinigung anfordern",
+                           hr_contract: "Frage zu Ihrem Vertrag" }
+      },
+      en_US: {
+        title: "My HR & IT Tickets", privacyNote: "You only see your own requests.",
+        openLabel: "open", openAria: "{n} open requests",
+        filterBySystem: "Filter by system", tabAll: "All", tabIT: "IT", tabHR: "HR",
+        searchLabel: "Search requests", searchPlaceholder: "Search requests…",
+        statusFilterLabel: "Filter by status", statusAll: "All statuses",
+        loading: "Loading your requests…",
+        emptyTitle: "You're all caught up", emptyBody: "No open tickets — you have nothing outstanding.",
+        noResultsTitle: "No matches", noResultsBody: "No requests match your search or filter.",
+        errorTitle: "Couldn't load your requests",
+        errorBody: "Please try again. If the problem persists, contact support.",
+        retry: "Try again", actionRequired: "Action required", updated: "Updated {date}",
+        priorityAria: "Priority: {p}", statusAria: "Status: {s}",
+        actOpen: "Open", actUpdate: "Update / add comment", actRespond: "Respond",
+        ariaOpen: "Open request {num} (new tab)",
+        ariaUpdate: "Add a comment to request {num} (new tab)",
+        ariaRespond: "Respond to request {num} (new tab)",
+        newRequest: "New request", newRequestSub: "Choose a request type",
+        back: "Back", close: "Close", openInServiceNow: "Open in ServiceNow",
+        formSubject: "Subject", formDescription: "Description", formCategory: "Category", formPriority: "Priority",
+        formSubjectPh: "A short summary of your request", formDescriptionPh: "Describe your request…",
+        submit: "Submit request", submitting: "Submitting…", errSubject: "Please enter a subject.",
+        catalogHintPre: "Prefer to do it in the system? ", catalogHintLink: "Complete it in ServiceNow",
+        successTitle: "Request created",
+        successBody: "Your request {num} has been created and now appears at the top of your list.",
+        successNote: "In a live environment, the request is routed to ServiceNow via SSO.",
+        done: "Done", groupITLabel: "IT requests", groupHRLabel: "HR requests",
+        status: { NEW: "New", IN_PROGRESS: "In Progress", WAITING_ON_YOU: "Waiting on you", RESOLVED: "Resolved" },
+        category: { ACCESS: "Access", HARDWARE: "Hardware", PAYROLL: "Payroll", LEAVE: "Leave",
+                    CONTRACT: "Contract", CERTIFICATE: "Certificate", ONBOARDING: "Onboarding", OTHER: "Other" },
+        priority: { LOW: "Low", MEDIUM: "Medium", HIGH: "High" },
+        requestTypes: { it_incident: "Incident Report", it_hardware: "Hardware Request", it_access: "Access Request",
+                        hr_payroll: "Payroll Query", hr_leave: "Leave / Absence",
+                        hr_certificate: "Certificate", hr_contract: "Contract Question" },
+        requestTypeDesc: { it_incident: "Something isn't working", it_hardware: "Request a device or accessory",
+                           it_access: "Access to a system or folder", hr_payroll: "A question about pay or payslips",
+                           hr_leave: "Request leave or absence", hr_certificate: "Request an official certificate",
+                           hr_contract: "A question about your contract" }
+      }
+    };
+    const t = T[locale] || T.en_US;
+    const tr = (key, vars) => {
+      let s = t[key] != null ? t[key] : key;
+      if (vars) Object.keys(vars).forEach(k => { s = s.split('{' + k + '}').join(vars[k]); });
+      return s;
+    };
+
+    /* ===================== helpers ===================== */
+    const esc = s => String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const dateFmt = new Intl.DateTimeFormat(intlLocale, { day: 'numeric', month: 'short', year: 'numeric' });
+    const fmtDate = iso => dateFmt.format(new Date(iso));
+    const systemGroup = sys => sys === 'HR Service Desk' ? 'HR' : 'IT';
+
+    const CATEGORY_ORDER = ['ACCESS', 'HARDWARE', 'PAYROLL', 'LEAVE', 'CONTRACT', 'CERTIFICATE', 'ONBOARDING', 'OTHER'];
+    const PRIORITY_ORDER = ['LOW', 'MEDIUM', 'HIGH'];
+
+    const I_EXT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+    const I_COMMENT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    const I_REPLY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17 4 12l5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
+    const I_MONITOR = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>';
+    const I_USER = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>';
+
+    const STATUS_ICON = {
+      NEW: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>',
+      IN_PROGRESS: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+      WAITING_ON_YOU: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 1 21h22L12 2z"/><path d="M12 9v5M12 17.5v.5"/></svg>',
+      RESOLVED: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
+    };
+    const STATUS_CLASS = { NEW: 'status-new', IN_PROGRESS: 'status-prog', WAITING_ON_YOU: 'status-wait', RESOLVED: 'status-done' };
+
+    function applyTranslations() {
+      document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.dataset.i18n; if (t[k] != null) el.textContent = t[k]; });
+      document.querySelectorAll('[data-i18n-aria-label]').forEach(el => { const k = el.dataset.i18nAriaLabel; if (t[k] != null) el.setAttribute('aria-label', t[k]); });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { const k = el.dataset.i18nPlaceholder; if (t[k] != null) el.placeholder = t[k]; });
+    }
+
+    /* ===================== state ===================== */
+    const state = { system: 'ALL', search: '', status: 'ALL', tickets: [], loaded: false, nextId: 1000 };
+    const region = document.getElementById('region');
+
+    function actionButtons(item) {
+      const a = (cls, icon, label, aria) =>
+        '<a class="cw-btn ' + cls + ' cw-btn-sm" href="' + esc(item.url) + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(aria) + '">' +
+        icon + '<span>' + esc(label) + '</span></a>';
+      const open = a('cw-btn-soft', I_EXT, t.actOpen, tr('ariaOpen', { num: item.ticketNumber }));
+      const update = a('cw-btn-ghost', I_COMMENT, t.actUpdate, tr('ariaUpdate', { num: item.ticketNumber }));
+      if (item.status === 'WAITING_ON_YOU')
+        return a('cw-btn-primary', I_REPLY, t.actRespond, tr('ariaRespond', { num: item.ticketNumber })) + open + update;
+      return open + update;
+    }
+
+    function renderCard(item) {
+      const grp = systemGroup(item.system);
+      const statusName = t.status[item.status] || item.status;
+      const catName = t.category[item.category] || item.category;
+      const prioName = t.priority[item.priority] || item.priority;
+      const flag = item.actionRequired
+        ? '<span class="action-flag"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 1 21h22L12 2z"/><path d="M12 9v5M12 17.5v.5"/></svg>' + esc(t.actionRequired) + '</span>'
+        : '';
+      return '' +
+        '<li><article class="ticket-card' + (item.actionRequired ? ' is-action' : '') + '" aria-labelledby="subj-' + item.id + '">' +
+          '<span class="row-icon" aria-hidden="true">' + (grp === 'HR' ? I_USER : I_MONITOR) + '</span>' +
+          '<div class="ticket-main">' +
+            flag +
+            '<div class="ticket-top">' +
+              '<span class="ticket-num">' + esc(item.ticketNumber) + '</span>' +
+              '<span class="status-chip ' + STATUS_CLASS[item.status] + '" aria-label="' + esc(tr('statusAria', { s: statusName })) + '">' +
+                STATUS_ICON[item.status] + '<span>' + esc(statusName) + '</span></span>' +
+            '</div>' +
+            '<h3 class="ticket-subject" id="subj-' + item.id + '">' + esc(item.subject) + '</h3>' +
+            '<div class="ticket-meta">' +
+              '<span class="category-chip"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0L3 13V3h10l7.59 7.59a2 2 0 0 1 0 2.82z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>' + esc(catName) + '</span>' +
+              '<span class="priority prio-' + esc(item.priority) + '" aria-label="' + esc(tr('priorityAria', { p: prioName })) + '"><span class="prio-dot" aria-hidden="true"></span>' + esc(prioName) + '</span>' +
+              '<span class="updated">' + esc(tr('updated', { date: fmtDate(item.updatedAt) })) + '</span>' +
+            '</div>' +
+            '<div class="ticket-actions">' + actionButtons(item) + '</div>' +
+          '</div>' +
+        '</article></li>';
+    }
+
+    function stateBlock(icon, title, body, withRetry) {
+      return '<div class="cw-state">' + icon + '<h3>' + esc(title) + '</h3><p>' + esc(body) + '</p>' +
+        (withRetry ? '<button type="button" class="cw-btn cw-btn-soft" id="retryBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>' + esc(t.retry) + '</button>' : '') +
+        '</div>';
+    }
+
+    function updateOpenBadge() {
+      const c = state.tickets.filter(x => x.status !== 'RESOLVED').length;
+      document.getElementById('openCount').textContent = c;
+      document.getElementById('openBadgeAria').textContent = tr('openAria', { n: c });
+    }
+
+    function render() {
+      if (!state.loaded) return;
+      updateOpenBadge();
+      if (state.tickets.length === 0) {
+        region.innerHTML = stateBlock('<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', t.emptyTitle, t.emptyBody, false);
+        return;
+      }
+      const q = state.search.trim().toLowerCase();
+      let list = state.tickets.filter(item => {
+        if (state.system !== 'ALL' && systemGroup(item.system) !== state.system) return false;
+        if (state.status !== 'ALL' && item.status !== state.status) return false;
+        if (q && !(item.subject.toLowerCase().includes(q) || item.ticketNumber.toLowerCase().includes(q))) return false;
+        return true;
+      });
+      list.sort((a, b) => {
+        if (a.actionRequired !== b.actionRequired) return a.actionRequired ? -1 : 1;
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      });
+      if (list.length === 0) {
+        region.innerHTML = stateBlock('<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>', t.noResultsTitle, t.noResultsBody, false);
+        return;
+      }
+      region.innerHTML = '<ul class="cw-list">' + list.map(renderCard).join('') + '</ul>';
+    }
+
+    function loadTickets() {
+      state.loaded = false;
+      region.setAttribute('aria-busy', 'true');
+      region.innerHTML = '<div class="cw-state"><div class="spinner" aria-hidden="true"></div><p>' + esc(t.loading) + '</p></div>';
+      setTimeout(() => {
+        region.setAttribute('aria-busy', 'false');
+        if (SIMULATE.error) {
+          region.innerHTML = stateBlock('<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16.5v.5"/></svg>', t.errorTitle, t.errorBody, true);
+          const r = document.getElementById('retryBtn'); if (r) r.addEventListener('click', loadTickets);
+          return;
+        }
+        state.tickets = SIMULATE.empty ? [] : MOCK_TICKETS.slice();
+        state.loaded = true;
+        render();
+      }, SIMULATE.loadMs);
+    }
+
+    function resetFilters() {
+      state.system = 'ALL'; state.status = 'ALL'; state.search = '';
+      document.querySelectorAll('#systemTabs .cw-seg').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.system === 'ALL')));
+      document.getElementById('statusFilter').value = 'ALL';
+      document.getElementById('searchInput').value = '';
+    }
+
+    /* ===================== modal ===================== */
+    const overlay = document.getElementById('modalOverlay');
+    const modalBody = document.getElementById('modalBody');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBack = document.getElementById('modalBack');
+    const modalClose = document.getElementById('modalClose');
+    let lastFocused = null;
+
+    const focusables = () => Array.prototype.slice.call(
+      overlay.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')
+    ).filter(el => el.offsetParent !== null);
+
+    function onModalKeydown(e) {
+      if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+      if (e.key !== 'Tab') return;
+      const f = focusables(); if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    function focusFirst() {
+      const f = focusables();
+      const target = modalBack.hidden ? (f.find(el => el !== modalClose) || modalClose) : f[0];
+      if (target) target.focus();
+    }
+    function openModal() {
+      lastFocused = document.activeElement;
+      overlay.hidden = false;
+      showTypePicker();
+      document.addEventListener('keydown', onModalKeydown, true);
+    }
+    function closeModal() {
+      overlay.hidden = true;
+      document.removeEventListener('keydown', onModalKeydown, true);
+      if (lastFocused && lastFocused.focus) lastFocused.focus();
+    }
+
+    function typeCard(rt) {
+      const icon = rt.group === 'HR' ? I_USER : I_MONITOR;
+      return '<div class="type-card">' +
+        '<button type="button" class="type-pick" data-type="' + rt.key + '">' +
+          '<span class="row-icon" aria-hidden="true">' + icon + '</span>' +
+          '<span class="type-text"><span class="type-name">' + esc(t.requestTypes[rt.key]) + '</span>' +
+          '<span class="type-desc">' + esc(t.requestTypeDesc[rt.key]) + '</span></span>' +
+        '</button>' +
+        '<a class="type-catalog" href="' + esc(rt.catalogUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(t.requestTypes[rt.key] + ' — ' + t.openInServiceNow) + '">' +
+          esc(t.openInServiceNow) + I_EXT + '</a>' +
+      '</div>';
+    }
+
+    function showTypePicker() {
+      modalTitle.textContent = t.newRequest;
+      modalBack.hidden = true;
+      const group = (g, labelKey) =>
+        '<section class="type-group"><h3 class="type-group-title">' +
+          '<span class="open-badge">' + esc(t['tab' + g]) + '</span>' + esc(t[labelKey]) + '</h3>' +
+          '<div class="type-list">' + REQUEST_TYPES[g].map(typeCard).join('') + '</div></section>';
+      modalBody.innerHTML = '<p class="modal-sub">' + esc(t.newRequestSub) + '</p>' +
+        group('IT', 'groupITLabel') + group('HR', 'groupHRLabel');
+      modalBody.querySelectorAll('.type-pick').forEach(b => b.addEventListener('click', () => showForm(b.dataset.type)));
+      focusFirst();
+    }
+
+    function showForm(typeKey) {
+      const rt = TYPE_BY_KEY[typeKey];
+      modalTitle.textContent = t.requestTypes[typeKey];
+      modalBack.hidden = false;
+      const catOpts = CATEGORY_ORDER.map(c => '<option value="' + c + '"' + (c === rt.defaultCategory ? ' selected' : '') + '>' + esc(t.category[c]) + '</option>').join('');
+      const prioOpts = PRIORITY_ORDER.map(p => '<option value="' + p + '"' + (p === 'MEDIUM' ? ' selected' : '') + '>' + esc(t.priority[p]) + '</option>').join('');
+      modalBody.innerHTML =
+        '<form id="reqForm" novalidate>' +
+          '<div class="form-field"><label for="reqSubject">' + esc(t.formSubject) + '</label><input type="text" id="reqSubject" class="form-control" placeholder="' + esc(t.formSubjectPh) + '" required></div>' +
+          '<p class="form-error" id="reqSubjectErr" role="alert" hidden>' + esc(t.errSubject) + '</p>' +
+          '<div class="form-field"><label for="reqDesc">' + esc(t.formDescription) + '</label><textarea id="reqDesc" class="form-control" placeholder="' + esc(t.formDescriptionPh) + '"></textarea></div>' +
+          '<div class="form-field"><label for="reqCategory">' + esc(t.formCategory) + '</label><select id="reqCategory" class="form-control">' + catOpts + '</select></div>' +
+          '<div class="form-field"><label for="reqPriority">' + esc(t.formPriority) + '</label><select id="reqPriority" class="form-control">' + prioOpts + '</select></div>' +
+          '<p class="form-catalog-hint">' + esc(t.catalogHintPre) + '<a href="' + esc(rt.catalogUrl) + '" target="_blank" rel="noopener noreferrer">' + esc(t.catalogHintLink) + ' ↗</a></p>' +
+          '<button type="submit" class="cw-btn cw-btn-primary cw-btn-block" id="reqSubmit">' + esc(t.submit) + '</button>' +
+        '</form>';
+      document.getElementById('reqForm').addEventListener('submit', e => { e.preventDefault(); submitForm(rt); });
+      focusFirst();
+    }
+
+    const genTicketNumber = prefix => prefix + String(Math.floor(90000 + Math.random() * 9999)).padStart(7, '0');
+
+    function submitForm(rt) {
+      const subjectEl = document.getElementById('reqSubject');
+      const errEl = document.getElementById('reqSubjectErr');
+      const subject = subjectEl.value.trim();
+      if (!subject) { errEl.hidden = false; subjectEl.setAttribute('aria-invalid', 'true'); subjectEl.focus(); return; }
+      errEl.hidden = true; subjectEl.removeAttribute('aria-invalid');
+      const category = document.getElementById('reqCategory').value;
+      const priority = document.getElementById('reqPriority').value;
+      const description = document.getElementById('reqDesc').value.trim();
+      const btn = document.getElementById('reqSubmit');
+      btn.disabled = true; btn.textContent = t.submitting;
+      // Mock submit. In prod: POST to ServiceNow / HR connector, use returned number.
+      setTimeout(() => {
+        const num = genTicketNumber(rt.numPrefix);
+        const iso = new Date().toISOString();
+        const isHR = rt.group === 'HR';
+        const url = isHR ? 'https://hr.dekra.com/servicedesk/cases/' + num
+          : 'https://dekra.service-now.com/now/nav/ui/classic/params/target/' +
+            (rt.numPrefix === 'INC' ? 'incident.do' : 'sc_request.do') + '%3Fsysparm_query%3Dnumber%3D' + num;
+        state.tickets.unshift({
+          id: 'new-' + (state.nextId++), ticketNumber: num, subject, system: rt.system, category,
+          status: 'NEW', priority, createdAt: iso, updatedAt: iso, actionRequired: false, url, description
+        });
+        resetFilters();
+        render();
+        showSuccess(num);
+      }, 600);
+    }
+
+    function showSuccess(num) {
+      modalTitle.textContent = t.successTitle;
+      modalBack.hidden = true;
+      modalBody.innerHTML =
+        '<div class="success-box" role="status">' +
+          '<div class="success-icon"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>' +
+          '<h3>' + esc(t.successTitle) + '</h3>' +
+          '<span class="ticket-pill">' + esc(num) + '</span>' +
+          '<p>' + esc(tr('successBody', { num: num })) + '</p>' +
+          '<p>' + esc(t.successNote) + '</p>' +
+          '<button type="button" class="cw-btn cw-btn-primary cw-btn-block" id="successDone">' + esc(t.done) + '</button>' +
+        '</div>';
+      document.getElementById('successDone').addEventListener('click', closeModal);
+      focusFirst();
+    }
+
+    /* ===================== init ===================== */
+    function init() {
+      applyTranslations();
+      document.getElementById('modalBackLabel').textContent = t.back;
+      document.getElementById('modalCloseLabel').textContent = t.close;
+      modalClose.setAttribute('aria-label', t.close);
+      modalBack.setAttribute('aria-label', t.back);
+
+      document.getElementById('newRequestBtn').addEventListener('click', openModal);
+      modalClose.addEventListener('click', closeModal);
+      modalBack.addEventListener('click', showTypePicker);
+      overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+      document.querySelectorAll('#systemTabs .cw-seg').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.system = btn.dataset.system;
+          document.querySelectorAll('#systemTabs .cw-seg').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+          render();
+        });
+      });
+
+      const sel = document.getElementById('statusFilter');
+      sel.innerHTML = [['ALL', t.statusAll]].concat(['NEW', 'IN_PROGRESS', 'WAITING_ON_YOU', 'RESOLVED'].map(k => [k, t.status[k]]))
+        .map(([v, label]) => '<option value="' + v + '">' + esc(label) + '</option>').join('');
+      sel.addEventListener('change', () => { state.status = sel.value; render(); });
+
+      document.getElementById('searchInput').addEventListener('input', e => { state.search = e.target.value; render(); });
+
+      loadTickets();
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
+  </script>
+</body>
+</html>
