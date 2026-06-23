@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="widget-name" content="My HR Documents">
+<meta name="widget-description" content="One front door to an employee's personal HR documents and company policies, deep-linked to their source systems.">
+<meta name="widget-tags" content="HR Data, File Management">
+<title>My HR Documents</title>
+
+<style>
+    /* =====================================================================
+       BRAND — inherit the environment's theme tokens; hardcoded values are
+       DEKRA-green fallbacks only (safety net). applySBBrand() also pulls the
+       tokens from the parent document when same-origin, so the card auto-
+       adopts DEKRA's green in Studio without touching this file.
+       ===================================================================== */
+    :root {
+        --brand:      var(--sb-brand-color, #007A33);        /* DEKRA green */
+        --brand-soft: var(--sb-brand-color-light, #E3F0DA);  /* light-green chips/tiles */
+        --brand-deep: #2E6B47;                               /* dark-green text on soft */
+
+        --card-bg:  #ffffff;
+        --page-bg:  #ECEEEE;   /* light homepage grey behind the card (preview only) */
+        --heading:  #16271F;   /* near-black green heading */
+        --text:     #16271F;
+        --meta:     #8A8A8A;   /* muted meta text (dates, labels) */
+        --panel:    #F4F5F5;   /* inner panels / value boxes */
+        --icon-chip:#EFEFEF;   /* circular grey list-row icon chip */
+        --divider:  #F0F0F0;
+        --shadow:   0 2px 8px rgba(0,0,0,0.06);
+
+        /* Inherit the environment font where exposed, else a neutral system stack */
+        --font: var(--sb-base-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+        font-family: var(--font);
+        background: var(--page-bg);
+        color: var(--text);
+        margin: 0;
+        padding: 20px 12px;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* Card — white, generous padding, large radius, soft shadow, no hard border */
+    .widget {
+        width: 100%;
+        max-width: 480px;
+        margin: 0 auto;
+        background: var(--card-bg);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        padding: 24px;
+    }
+
+    /* Header */
+    .hr-head h2 {
+        margin: 0 0 4px;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--heading);
+        letter-spacing: -0.01em;
+    }
+    .hr-auth {
+        margin: 0 0 18px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--meta);
+    }
+    .cw-ico { display: inline-flex; align-items: center; }
+    .hr-auth .cw-ico svg { width: 13px; height: 13px; }
+
+    /* Segmented control (matches the Absence widget's "Ihre Anträge / Verlauf") */
+    .cw-segmented {
+        display: inline-flex;
+        background: var(--panel);
+        border-radius: 999px;
+        padding: 4px;
+        gap: 4px;
+        margin: 0 0 16px;
+    }
+    .cw-seg {
+        border: none;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 9px 18px;
+        border-radius: 999px;
+        cursor: pointer;
+        min-height: 40px;
+    }
+    .cw-seg[aria-selected="true"] { background: var(--brand-soft); color: var(--brand-deep); }
+    .cw-seg:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+    /* Controls */
+    #hr-controls[hidden] { display: none; }
+    .hr-search-wrap { position: relative; margin-bottom: 12px; }
+    .hr-search-wrap .cw-ico {
+        position: absolute;
+        left: 14px; top: 50%;
+        transform: translateY(-50%);
+        color: var(--meta);
+        pointer-events: none;
+    }
+    .hr-search-wrap .cw-ico svg { width: 16px; height: 16px; }
+    .cw-search {
+        width: 100%;
+        min-height: 44px;
+        background: var(--panel);
+        border: none;
+        border-radius: 12px;
+        padding: 12px 14px 12px 40px;
+        font: inherit;
+        font-size: 14px;
+        color: var(--text);
+    }
+    .cw-search::placeholder { color: var(--meta); }
+    .cw-search:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+    /* Filter pills (matches the selected month chip "April 2025" / status pills) */
+    .type-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .cw-pill {
+        border: none;
+        background: var(--panel);
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 8px 14px;
+        border-radius: 999px;
+        cursor: pointer;
+        min-height: 36px;
+    }
+    .cw-pill[aria-pressed="true"] { background: var(--brand-soft); color: var(--brand-deep); }
+    .cw-pill:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+    /* List rows — white, subtle divider, circular grey icon chip on the left */
+    .doc-list { display: flex; flex-direction: column; }
+    .doc-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--divider);
+    }
+    .doc-row:first-child { padding-top: 4px; }
+    .doc-row:last-child { border-bottom: none; }
+    .doc-icon {
+        flex: 0 0 auto;
+        width: 40px; height: 40px;
+        border-radius: 50%;
+        background: var(--icon-chip);
+        color: var(--brand-deep);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .doc-icon svg { width: 18px; height: 18px; }
+    .doc-body { flex: 1 1 auto; min-width: 0; }
+    .doc-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--heading);
+        margin: 0 0 3px;
+        line-height: 1.3;
+        word-break: break-word;
+    }
+    .doc-meta { margin: 0; font-size: 13px; color: var(--meta); }
+
+    /* Open action — green link (brand) */
+    .doc-actions { flex: 0 0 auto; display: flex; align-items: center; padding-top: 2px; }
+    .cw-open {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--brand);
+        font-weight: 600;
+        font-size: 14px;
+        text-decoration: none;
+        padding: 6px 4px;
+        border-radius: 8px;
+        white-space: nowrap;
+    }
+    .cw-open:hover { text-decoration: underline; }
+    .cw-open:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+    .cw-open svg { width: 16px; height: 16px; }
+
+    /* Empty / error states */
+    .hr-state { text-align: center; padding: 28px 12px; color: var(--meta); }
+    .hr-state .cw-ico { justify-content: center; }
+    .hr-state .cw-ico svg { width: 30px; height: 30px; opacity: .5; }
+    .hr-state-title { font-weight: 600; color: var(--text); margin: 10px 0 4px; font-size: 15px; }
+    .hr-state p { margin: 0; font-size: 13px; }
+    .hr-retry {
+        margin-top: 16px;
+        min-height: 44px;
+        background: var(--brand);
+        color: #fff;
+        border: none;
+        border-radius: 999px;
+        padding: 10px 22px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .hr-retry:hover { filter: brightness(.95); }
+    .hr-retry:focus-visible { outline: 2px solid var(--brand-deep); outline-offset: 2px; }
+
+    /* Loading skeleton */
+    .skel-row { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--divider); }
+    .skel-lines { flex: 1; }
+    .skel-box {
+        background: var(--panel);
+        background-image: linear-gradient(90deg, var(--panel) 0, #E9EBEB 40px, var(--panel) 80px);
+        background-size: 600px 100%;
+        animation: skel 1.3s infinite linear;
+        border-radius: 6px;
+    }
+    .skel-ico { width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; }
+    .skel-l1 { height: 12px; width: 65%; margin-bottom: 9px; }
+    .skel-l2 { height: 10px; width: 40%; }
+    @keyframes skel { 0% { background-position: -120px 0; } 100% { background-position: 480px 0; } }
+    @media (prefers-reduced-motion: reduce) { .skel-box { animation: none; } }
+
+    .hr-footnote { margin: 16px 0 0; font-size: 11.5px; color: var(--meta); line-height: 1.45; }
+
+    .cw-visually-hidden {
+        position: absolute; width: 1px; height: 1px;
+        padding: 0; margin: -1px; overflow: hidden;
+        clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
+    /* Mobile-first: full-width segmented control + tighter rows */
+    @media (max-width: 480px) {
+        .widget { padding: 20px; border-radius: 14px; }
+        .cw-segmented { display: flex; width: 100%; }
+        .cw-seg { flex: 1; padding: 9px 8px; }
+        .doc-row { gap: 12px; }
+    }
+</style>
+</head>
+
+<body>
+
+<div class="widget" role="region" aria-labelledby="hr-title">
+    <div class="hr-head">
+        <h2 id="hr-title" data-i18n="title"></h2>
+        <p class="hr-auth">
+            <span class="cw-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </span>
+            <span data-i18n="authLine"></span>
+        </p>
+    </div>
+
+    <div class="cw-segmented" role="tablist" data-i18n-al="tablistLabel">
+        <button class="cw-seg" role="tab" id="tab-personal" data-tab="personal" aria-selected="true"  aria-controls="hr-panel" tabindex="0"  data-i18n="tabPersonal"></button>
+        <button class="cw-seg" role="tab" id="tab-company"  data-tab="company"  aria-selected="false" aria-controls="hr-panel" tabindex="-1" data-i18n="tabCompany"></button>
+    </div>
+
+    <div id="hr-panel" role="tabpanel" aria-labelledby="tab-personal" tabindex="0">
+        <div id="hr-controls">
+            <label class="cw-visually-hidden" for="hr-search" data-i18n="searchLabel"></label>
+            <div class="hr-search-wrap">
+                <span class="cw-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                </span>
+                <input id="hr-search" type="search" class="cw-search" autocomplete="off" data-i18n-ph="searchPlaceholder">
+            </div>
+            <div class="type-filters" id="hr-filter" role="group" data-i18n-al="filterLabel"></div>
+        </div>
+        <div id="hr-list" class="doc-list" aria-busy="false"></div>
+    </div>
+
+    <p class="cw-visually-hidden" id="hr-status" role="status" aria-live="polite"></p>
+    <p class="hr-footnote" data-i18n="footnote"></p>
+</div>
+
+<script>
+/* =========================================================================
+   DEMO CONFIG
+   ========================================================================= */
+// UI language. Default de_DE; in production this should follow the user's
+// Staffbase profile language. Supported here: 'de_DE' | 'en_US'.
+let locale = 'de_DE';
+
+// Demo-only flags so the loading and error states are easy to show.
+const SIMULATE_DELAY_MS = 600;   // brief artificial load; set 0 to disable
+const SIMULATE_ERROR    = false; // set true to preview the error state
+
+/* =========================================================================
+   MOCK DATA  ──  replace ONLY this block with a live source later.
+   Swap targets: Staffbase Media/Files API · Microsoft 365 Document Library
+   feed · or an Integration-Services connector to the digital personnel file
+   / DMS (SAP SuccessFactors, SAP HCM, SharePoint).
+   The array is assumed to be ALREADY permission-filtered for the current
+   user — the widget renders whatever it is given and adds no client-side
+   entitlement logic.
+   Item shape (kept full for the live-source contract):
+     { id, title, category, type, date (ISO), fileFormat, sizeKB,
+       sensitive, source, url }
+   NOTE: fileFormat / sizeKB / source / sensitive are retained in the model
+   but not surfaced in this view (clean OOTB-style list; no masking).
+   Dates are anchored to new Date() at runtime so the demo always feels current.
+   ========================================================================= */
+const now      = new Date();
+const daysAgo  = n => { const d = new Date(now); d.setDate(d.getDate() - n); return d; };
+const monthEnd = n => new Date(now.getFullYear(), now.getMonth() - n + 1, 0); // last day of the month n months ago
+const deLong   = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' });
+const lastYear = now.getFullYear() - 1;
+
+const DOCS = [
+    // ── Personal (digital personnel file / SuccessFactors) ──────────────
+    { id: 'PAY-001', title: 'Gehaltsabrechnung ' + deLong.format(monthEnd(1)), category: 'personal', type: 'Gehaltsabrechnung', date: monthEnd(1).toISOString(), fileFormat: 'PDF/A', sizeKB: 86,  sensitive: true,  source: 'SuccessFactors', url: 'https://hcm.example.com/sf/payslips/PAY-001' },
+    { id: 'PAY-002', title: 'Gehaltsabrechnung ' + deLong.format(monthEnd(2)), category: 'personal', type: 'Gehaltsabrechnung', date: monthEnd(2).toISOString(), fileFormat: 'PDF/A', sizeKB: 85,  sensitive: true,  source: 'SuccessFactors', url: 'https://hcm.example.com/sf/payslips/PAY-002' },
+    { id: 'PAY-003', title: 'Gehaltsabrechnung ' + deLong.format(monthEnd(3)), category: 'personal', type: 'Gehaltsabrechnung', date: monthEnd(3).toISOString(), fileFormat: 'PDF/A', sizeKB: 84,  sensitive: true,  source: 'SuccessFactors', url: 'https://hcm.example.com/sf/payslips/PAY-003' },
+    { id: 'CON-001', title: 'Arbeitsvertrag (unbefristet)',                    category: 'personal', type: 'Arbeitsvertrag',    date: new Date(now.getFullYear() - 3, 8, 1).toISOString(), fileFormat: 'PDF/A', sizeKB: 214, sensitive: true,  source: 'Personnel File', url: 'https://personalakte.example.com/doc/CON-001' },
+    { id: 'TAX-001', title: 'Lohnsteuerbescheinigung ' + lastYear,             category: 'personal', type: 'Bescheinigung',     date: new Date(now.getFullYear(), 1, 12).toISOString(),    fileFormat: 'PDF/A', sizeKB: 72,  sensitive: true,  source: 'SuccessFactors', url: 'https://hcm.example.com/sf/tax/TAX-001' },
+    { id: 'REF-001', title: 'Arbeitszeugnis (Zwischenzeugnis)',                category: 'personal', type: 'Arbeitszeugnis',    date: daysAgo(118).toISOString(),                          fileFormat: 'PDF/A', sizeKB: 138, sensitive: false, source: 'Personnel File', url: 'https://personalakte.example.com/doc/REF-001' },
+
+    // ── Company & policy (SharePoint) ───────────────────────────────────
+    { id: 'POL-TRV', title: 'Reise- und Spesenrichtlinie',           category: 'company', type: 'Richtlinie', date: daysAgo(46).toISOString(), fileFormat: 'PDF/A', sizeKB: 548,  sensitive: false, source: 'SharePoint', url: 'https://sharepoint.example.com/sites/hr/POL-TRV' },
+    { id: 'POL-SAF', title: 'Arbeitssicherheit & Gesundheitsschutz', category: 'company', type: 'Sicherheit', date: daysAgo(19).toISOString(), fileFormat: 'PDF/A', sizeKB: 1280, sensitive: false, source: 'SharePoint', url: 'https://sharepoint.example.com/sites/hr/POL-SAF' },
+    { id: 'BEN-OVR', title: 'Benefits-Übersicht ' + now.getFullYear(), category: 'company', type: 'Benefits',  date: daysAgo(9).toISOString(),  fileFormat: 'PDF/A', sizeKB: 742,  sensitive: false, source: 'SharePoint', url: 'https://sharepoint.example.com/sites/hr/BEN-OVR' },
+    { id: 'POL-DSG', title: 'Datenschutzrichtlinie (DSGVO)',          category: 'company', type: 'Richtlinie', date: daysAgo(73).toISOString(), fileFormat: 'PDF/A', sizeKB: 402,  sensitive: false, source: 'SharePoint', url: 'https://sharepoint.example.com/sites/hr/POL-DSG' }
+];
+/* ===================== END MOCK DATA ===================================== */
+
+/* =========================================================================
+   i18n — bilingual German / English, driven by `locale` above.
+   ========================================================================= */
+const LANG       = String(locale).toLowerCase().startsWith('de') ? 'de' : 'en';
+const LOCALE_TAG = LANG === 'de' ? 'de-DE' : 'en-US';
+document.documentElement.lang = LANG;
+
+const T = {
+    de: {
+        title: 'Meine HR-Dokumente',
+        authLine: 'Sie sehen nur Dokumente, für die Sie berechtigt sind.',
+        tablistLabel: 'Dokumentgruppen',
+        tabPersonal: 'Persönlich',
+        tabCompany: 'Unternehmen & Richtlinien',
+        searchLabel: 'Dokumente durchsuchen',
+        searchPlaceholder: 'Dokumente durchsuchen …',
+        filterLabel: 'Nach Typ filtern',
+        filterAll: 'Alle Typen',
+        open: 'Öffnen',
+        openAria: '{title} öffnen (neuer Tab)',
+        loading: 'Dokumente werden geladen …',
+        emptyTitle: 'Keine Dokumente gefunden',
+        emptyBody: 'Passen Sie Suche oder Filter an.',
+        errorTitle: 'Dokumente konnten nicht geladen werden',
+        errorBody: 'Bitte versuchen Sie es später erneut.',
+        retry: 'Erneut versuchen',
+        footnote: 'Dokumente öffnen im jeweiligen Quellsystem. Ihre Zugriffe werden nicht protokolliert.'
+    },
+    en: {
+        title: 'My HR Documents',
+        authLine: "You only see documents you're authorised to access.",
+        tablistLabel: 'Document groups',
+        tabPersonal: 'Personal',
+        tabCompany: 'Company & policy',
+        searchLabel: 'Search documents',
+        searchPlaceholder: 'Search documents …',
+        filterLabel: 'Filter by type',
+        filterAll: 'All types',
+        open: 'Open',
+        openAria: 'Open {title} (new tab)',
+        loading: 'Loading documents …',
+        emptyTitle: 'No documents found',
+        emptyBody: 'Try adjusting your search or filter.',
+        errorTitle: "Couldn't load your documents",
+        errorBody: 'Please try again in a moment.',
+        retry: 'Try again',
+        footnote: "Documents open in their source system. Your views aren't tracked."
+    }
+};
+function t(key) { return (T[LANG] && key in T[LANG]) ? T[LANG][key] : T.en[key]; }
+function tpl(key, vars) {
+    let s = t(key) || key;
+    Object.keys(vars || {}).forEach(k => { s = s.split('{' + k + '}').join(vars[k]); });
+    return s;
+}
+
+// Document-type names (German + English)
+const TYPE_LABELS = {
+    Gehaltsabrechnung: { de: 'Gehaltsabrechnung', en: 'Payslip' },
+    Arbeitsvertrag:    { de: 'Arbeitsvertrag',    en: 'Employment contract' },
+    Bescheinigung:     { de: 'Bescheinigung',     en: 'Certificate' },
+    Arbeitszeugnis:    { de: 'Arbeitszeugnis',    en: 'Reference' },
+    Richtlinie:        { de: 'Richtlinie',        en: 'Policy' },
+    Sicherheit:        { de: 'Sicherheit',        en: 'Safety' },
+    Benefits:          { de: 'Benefits',          en: 'Benefits' }
+};
+const typeLabel = type => (TYPE_LABELS[type] || {})[LANG] || type;
+
+/* =========================================================================
+   Icons (decorative — always aria-hidden)
+   ========================================================================= */
+const ICON = {
+    doc:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>',
+    open:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    error:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+};
+
+/* =========================================================================
+   State (in memory only — NO localStorage/sessionStorage)
+   ========================================================================= */
+let activeTab   = 'personal';
+let searchQuery = '';
+let typeFilter  = 'all';
+let phase       = 'loading'; // 'loading' | 'ready' | 'error'
+let loadTimer   = null;
+
+const fmtDate = iso => new Intl.DateTimeFormat(LOCALE_TAG, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(iso));
+
+/* =========================================================================
+   Staffbase brand-token passthrough.
+   Reads --sb-brand-color / --sb-brand-color-light (with --sb-brand fallback)
+   from this document or, when same-origin, from the parent, and applies them
+   so the card inherits DEKRA's green automatically. CSS fallbacks cover the rest.
+   ========================================================================= */
+function applySBBrand() {
+    const read = (el, prop) => { try { return getComputedStyle(el).getPropertyValue(prop).trim(); } catch (e) { return ''; } };
+    const pick = prop => read(document.documentElement, prop) ||
+                         (window.parent && window.parent !== window ? read(window.parent.document.documentElement, prop) : '');
+    const brand = pick('--sb-brand-color') || pick('--sb-brand');
+    const soft  = pick('--sb-brand-color-light');
+    if (brand) document.documentElement.style.setProperty('--brand', brand);
+    if (soft)  document.documentElement.style.setProperty('--brand-soft', soft);
+}
+
+/* =========================================================================
+   Static text / attribute translation
+   ========================================================================= */
+function applyStatic() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const v = t(el.dataset.i18n); if (v !== undefined) el.textContent = v;
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+        const v = t(el.dataset.i18nPh); if (v !== undefined) el.placeholder = v;
+    });
+    document.querySelectorAll('[data-i18n-al]').forEach(el => {
+        const v = t(el.dataset.i18nAl); if (v !== undefined) el.setAttribute('aria-label', v);
+    });
+}
+
+/* =========================================================================
+   Rendering
+   ========================================================================= */
+const $ = id => document.getElementById(id);
+
+function renderRow(item) {
+    const row = document.createElement('div');
+    row.className = 'doc-row';
+    row.dataset.id = item.id;
+
+    const icon = document.createElement('div');
+    icon.className = 'doc-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = ICON.doc;
+    row.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'doc-body';
+
+    const title = document.createElement('p');
+    title.className = 'doc-title';
+    title.textContent = item.title; // textContent → safe, no HTML injection
+    body.appendChild(title);
+
+    const meta = document.createElement('p');
+    meta.className = 'doc-meta';
+    meta.textContent = typeLabel(item.type) + ' · ' + fmtDate(item.date);
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    const actions = document.createElement('div');
+    actions.className = 'doc-actions';
+    const open = document.createElement('a');
+    open.className = 'cw-open';
+    open.href = item.url;
+    open.target = '_blank';
+    open.rel = 'noopener noreferrer';
+    open.setAttribute('aria-label', tpl('openAria', { title: item.title }));
+    open.innerHTML = '<span class="cw-ico" aria-hidden="true">' + ICON.open + '</span><span class="cw-open-label"></span>';
+    open.querySelector('.cw-open-label').textContent = t('open');
+    // NOTE (Betriebsrat / no Leistungskontrolle): opening a document is deliberately
+    // NOT logged, counted, or reported anywhere — no per-user/per-doc analytics.
+    actions.appendChild(open);
+    row.appendChild(actions);
+
+    return row;
+}
+
+function getVisible() {
+    let docs = DOCS.filter(d => d.category === activeTab);
+    if (typeFilter !== 'all') docs = docs.filter(d => d.type === typeFilter);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) docs = docs.filter(d => d.title.toLowerCase().includes(q) || typeLabel(d.type).toLowerCase().includes(q));
+    return docs.sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function stateBlock(icon, titleKey, bodyKey, withRetry) {
+    const wrap = document.createElement('div');
+    wrap.className = 'hr-state';
+    wrap.innerHTML = '<div class="cw-ico" aria-hidden="true">' + icon + '</div>';
+    const h = document.createElement('p'); h.className = 'hr-state-title'; h.textContent = t(titleKey);
+    const p = document.createElement('p'); p.textContent = t(bodyKey);
+    wrap.appendChild(h); wrap.appendChild(p);
+    if (withRetry) {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'hr-retry'; btn.textContent = t('retry');
+        btn.addEventListener('click', loadDocs);
+        wrap.appendChild(btn);
+    }
+    return wrap;
+}
+
+function skeleton(list) {
+    for (let i = 0; i < 3; i++) {
+        const r = document.createElement('div');
+        r.className = 'skel-row';
+        r.setAttribute('aria-hidden', 'true');
+        r.innerHTML = '<div class="skel-box skel-ico"></div>' +
+                      '<div class="skel-lines"><div class="skel-box skel-l1"></div><div class="skel-box skel-l2"></div></div>';
+        list.appendChild(r);
+    }
+}
+
+function render() {
+    const list = $('hr-list');
+    const controls = $('hr-controls');
+    const status = $('hr-status');
+    list.innerHTML = '';
+
+    if (phase === 'loading') {
+        controls.hidden = true;
+        list.setAttribute('aria-busy', 'true');
+        skeleton(list);
+        status.textContent = t('loading');
+        return;
+    }
+    list.setAttribute('aria-busy', 'false');
+
+    if (phase === 'error') {
+        controls.hidden = true;
+        list.appendChild(stateBlock(ICON.error, 'errorTitle', 'errorBody', true));
+        status.textContent = t('errorTitle');
+        return;
+    }
+
+    controls.hidden = false;
+    const docs = getVisible();
+    if (docs.length === 0) {
+        list.appendChild(stateBlock(ICON.search, 'emptyTitle', 'emptyBody', false));
+        status.textContent = t('emptyTitle');
+        return;
+    }
+
+    const frag = document.createDocumentFragment();
+    docs.forEach(d => frag.appendChild(renderRow(d)));
+    list.appendChild(frag);
+
+    const n = docs.length;
+    status.textContent = LANG === 'de'
+        ? (n === 1 ? '1 Dokument' : n + ' Dokumente')
+        : (n === 1 ? '1 document' : n + ' documents');
+}
+
+function buildTypePills() {
+    const wrap = $('hr-filter');
+    const types = [...new Set(DOCS.filter(d => d.category === activeTab).map(d => d.type))]
+        .sort((a, b) => typeLabel(a).localeCompare(typeLabel(b), LOCALE_TAG));
+    typeFilter = 'all';
+    wrap.innerHTML = '';
+    const mk = (val, label) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'cw-pill';
+        b.dataset.val = val;
+        b.textContent = label;
+        b.setAttribute('aria-pressed', String(val === 'all'));
+        return b;
+    };
+    wrap.appendChild(mk('all', t('filterAll')));
+    types.forEach(tp => wrap.appendChild(mk(tp, typeLabel(tp))));
+}
+
+/* =========================================================================
+   Interaction
+   ========================================================================= */
+function activateTab(name) {
+    activeTab = name;
+    document.querySelectorAll('.cw-seg').forEach(tb => {
+        const sel = tb.dataset.tab === name;
+        tb.setAttribute('aria-selected', String(sel));
+        tb.tabIndex = sel ? 0 : -1;
+    });
+    $('hr-panel').setAttribute('aria-labelledby', 'tab-' + name);
+    $('hr-search').value = '';
+    searchQuery = '';
+    buildTypePills();
+    render();
+}
+
+function loadDocs() {
+    phase = 'loading';
+    render();
+    window.clearTimeout(loadTimer);
+    loadTimer = window.setTimeout(() => {
+        if (SIMULATE_ERROR) { phase = 'error'; render(); return; }
+        phase = 'ready';
+        buildTypePills();
+        render();
+    }, SIMULATE_DELAY_MS);
+}
+
+function init() {
+    applySBBrand();
+    applyStatic();
+
+    // Segmented control: click + roving arrow-key navigation (WAI-ARIA tabs pattern)
+    const segs = [...document.querySelectorAll('.cw-seg')];
+    segs.forEach((seg, i) => {
+        seg.addEventListener('click', () => activateTab(seg.dataset.tab));
+        seg.addEventListener('keydown', e => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            e.preventDefault();
+            const next = segs[(i + (e.key === 'ArrowRight' ? 1 : segs.length - 1)) % segs.length];
+            next.focus();
+            activateTab(next.dataset.tab);
+        });
+    });
+
+    // Search (debounced)
+    let sTimer;
+    $('hr-search').addEventListener('input', e => {
+        clearTimeout(sTimer);
+        const v = e.target.value;
+        sTimer = setTimeout(() => { searchQuery = v; render(); }, 180);
+    });
+
+    // Type filter pills (single active)
+    $('hr-filter').addEventListener('click', e => {
+        const pill = e.target.closest('.cw-pill');
+        if (!pill) return;
+        typeFilter = pill.dataset.val;
+        [...$('hr-filter').children].forEach(p => p.setAttribute('aria-pressed', String(p === pill)));
+        render();
+    });
+
+    loadDocs();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+<!-- NOTE: The repo-gallery usage-counter snippet (widgets/CLAUDE.md §10) is intentionally
+     OMITTED here: it writes to localStorage (forbidden in this environment) and pings an
+     external tracker, which conflicts with the Betriebsrat "no monitoring" requirement.
+     If this widget is ever added to the gallery, paste that snippet verbatim before </body>. -->
+
+</body>
+</html>
